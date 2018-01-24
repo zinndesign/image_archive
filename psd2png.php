@@ -1,6 +1,6 @@
-#!/usr/bin/php
-<?php
+<?
 error_reporting(E_ERROR | E_WARNING | E_PARSE);
+date_default_timezone_set('America/New_York');
 
 /*******************************************************************************
  * Script name: psd2png_export.php
@@ -20,14 +20,9 @@ error_reporting(E_ERROR | E_WARNING | E_PARSE);
  * http://metapicz.com/#landing (to read XMP data)
  *******************************************************************************/
 
-$convert_path = trim(`which convert`); // for debugging ImageMagick issues
-$exiftool_path = trim(`which exiftool`); // for debugging exiftool issues
-
-// check for all required arguments
-// first argument is always name of script!
-if ($argc < 2) {
-    die("\nUsage: php psd2png_export.php <\"path to PSD file\">\n\n");
-}
+// define the ImageMagick binary paths - may need to update depending on client Mac configuration
+define('CONVERT_PATH', '/usr/local/bin/convert');
+define('IDENTIFY_PATH', '/usr/local/bin/identify');
 
 // remove first argument
 array_shift($argv);
@@ -36,15 +31,28 @@ array_shift($argv);
 $psd = trim( $argv[0] );
 $psd = str_replace('\\','', $psd);
 
+// we'll write to a sub-folder so action doesn't try to modify new files as they're added
+$outpath = dirname($psd) . '/output/';
+if(!file_exists($outpath)) {
+    mkdir($outpath); // watch for permissions issues
+}
+
+$log = $outpath . 'debug.log';
+write2log($log, "Input file: " . basename($psd));
+
 if( !file_exists($psd) ) { // does it exist?
-	die("\nERROR: Input file not found\n\n");
+	write2log($log, 'ERROR: Input file not found');
+    die();
 } elseif( strtolower( substr($psd, -3) ) != 'psd' ) { // is it a PSD?
-	die("\nERROR: Input file must be a PSD\n\n");
+	write2log($log, 'ERROR: Input file must be a PSD');
+    die();
 }
 
 // create an array of all layer names
-$result = `identify -quiet -format "%[label]#" $psd`;
-$layers = explode('#', $result);
+$command = IDENTIFY_PATH . " -quiet -format \"%[label]^\" $psd";
+write2log($log, $command);
+$result = `$command`;
+$layers = explode('^', $result);
 
 // delete the extra element
 array_pop($layers);
@@ -52,15 +60,11 @@ array_pop($layers);
 // give the initial layer a label
 $layers[0] = 'composite';
 
-echo "Layers in PSD file:\n";
-print_r($layers);
-
-// we know IM treats 0 as the composite, so let's add it to the start of the array
-//array_unshift($layers, "composite");
+write2log($log, "Layers in PSD file:\n" . print_r($layers, true));
 
 // layer name patterns to match - using regex for typo forgiveness
-$match_layers = array('silo' => '/^s[[:alnum:]]{1}lo.*/i', // silo
-                      'shdw' => '/^sh[[:alnum:]]{1}dow.*/i', // shadow
+$match_layers = array('sl' => '/^s[[:alnum:]]{1}lo.*/i', // silo
+                      'sh' => '/^sh[[:alnum:]]{1}dow.*/i', // shadow
                       'base' => '/^b[[:alnum:]]{1}se.*/i'); // base
 
 // loop through the match layers and export PNGs as appropriate
@@ -69,29 +73,32 @@ foreach($match_layers as $key => $pattern) {
     
     // if there are matches, create the new PNG
     if(count($matches) > 0) {
-        echo count($matches) . " layer" . (count($matches)>1?'s':'') . " matching '$key'\n";
-        print_r($matches);
+        write2log($log, count($matches) . " layer" . (count($matches)>1?'s':'') . " matching '$key'");
+        write2log($log, print_r($matches, true));
         
         // format the new filename - skip any add-on if it's 'base'
-        //$png = substr($psd, 0, -4) . ($key == 'base' ? '' : '_'.$key) . '.png';
-        $png = substr($psd, 0, -4) . '_' . $key . '.png';
-         
-         // create the list of merge layers using the array keys
-         $merge = array_keys($matches);
-         // to maintain the canvas size, composite layer is included
-         array_unshift($merge, 0);
-         $merge_layers = $psd . '[' .implode(',', $merge) . ']';
-         
-         // run the IM command
-         // convert <filename>.psd[0] <filename>.psd[2] ( -clone 0 -alpha transparent ) -swap 0 +delete -coalesce -compose src-over -composite <extracted-filename>.png
-         $command = "convert -compose Over $merge_layers \( -clone 0 -alpha transparent \) -swap 0 +delete -background None -layers merge $png";
-         echo $command . "\n\n";
-         `$command`;
+        $png = $outpath . substr(basename($psd), 0, -4) . ($key == 'base' ? '' : '_'.$key) . '.png';
+        write2log($log, $png);
+        
+        // create the list of merge layers using the array keys
+        $merge = array_keys($matches);
+        // to maintain the canvas size, composite layer is included
+        array_unshift($merge, 0);
+        $merge_layers = $psd . '[' .implode(',', $merge) . ']';
+        
+        // run the convert command
+        $command = CONVERT_PATH . " -compose Over $merge_layers \( -clone 0 -alpha transparent \) -swap 0 +delete -background None -layers merge $png";
+        write2log($log, $command);
+        `$command`;
          
          // wrap it up
-         echo ">>>>>>>>>>>>>> $key PNG file saved as " . basename($png) . "\n\n";
+         write2log($log, ">>>>>>>>>>>>>> $key PNG file saved as " . basename($png) . " <<<<<<<<<<<<<<\n" );
     } else {
-        echo "No layers matching '$key'\n\n";
+        write2log($log, "No layers matching '$key'");
     }
 }
-?>
+
+function write2log($logfile, $message) {
+    $now = date("Y-m-d H:i:s");
+    file_put_contents($logfile, $now . " - " .$message . "\n", FILE_APPEND | LOCK_EX);
+}

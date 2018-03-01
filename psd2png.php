@@ -10,6 +10,10 @@ date_default_timezone_set('America/New_York');
  * each is exported as a PNG (with alpha transparency for silo and shadow),
  * using the appropriate naming convention.
  *
+ * March 2018 update: silo and shadow layers are combined into one file with
+ * the name format <filename>_sm.png. In addition, single-layer PSDs are also
+ * exported (identical to the PNGs, except for the format).
+ *
  * Binary Dependencies:
  * - PHP 5.6.30 (cli) (built: Feb  7 2017 16:18:37)
  * - ImageMagick 7.0.7-21 Q16 x86_64 2018-01-08 http://www.imagemagick.org
@@ -63,8 +67,9 @@ $layers[0] = 'composite';
 write2log($log, "Layers in PSD file:\n" . print_r($layers, true));
 
 // layer name patterns to match - using regex for typo forgiveness
-$match_layers = array('sl' => '/^s[[:alnum:]]{1}lo.*/i', // silo
-                      'sh' => '/^sh[[:alnum:]]{1}dow.*/i', // shadow
+$match_layers = array('sm' => '/^s[[:alnum:]]{1}lo.*|^sh[[:alnum:]]{1}dow.*/i', // silo and shadow
+                      //'sl' => '/^s[[:alnum:]]{1}lo.*/i', // silo - skipping as of 3/18
+                      //'sh' => '/^sh[[:alnum:]]{1}dow.*/i', // shadow - skipping as of 3/18
                       'base' => '/^b[[:alnum:]]{1}se.*/i'); // base
 
 // loop through the match layers and export PNGs as appropriate
@@ -73,12 +78,14 @@ foreach($match_layers as $key => $pattern) {
     
     // if there are matches, create the new PNG
     if(count($matches) > 0) {
-        write2log($log, count($matches) . " layer" . (count($matches)>1?'s':'') . " matching '$key'");
+        write2log($log, count($matches) . " layer" . (count($matches)>1?'s':'') . " matching regex pattern for '$key' ($pattern)");
         write2log($log, print_r($matches, true));
         
-        // format the new filename - skip any add-on if it's 'base'
-        $png = $outpath . substr(basename($psd), 0, -4) . ($key == 'base' ? '' : '_'.$key) . '.png';
-        write2log($log, $png);
+        // format the new filenames - skip any add-on if it's 'base'
+        $png_out = $outpath . substr(basename($psd), 0, -4) . ($key == 'base' ? '' : '_'.$key) . '.png';
+        $psd_out = substr($png_out, 0, -3) . 'psd';
+        write2log($log, $png_out);
+        write2log($log, $psd_out);
         
         // create the list of merge layers using the array keys
         $merge = array_keys($matches);
@@ -86,15 +93,21 @@ foreach($match_layers as $key => $pattern) {
         array_unshift($merge, 0);
         $merge_layers = $psd . '[' .implode(',', $merge) . ']';
         
-        // run the convert command
-        $command = CONVERT_PATH . " -compose Over $merge_layers \( -clone 0 -alpha transparent \) -swap 0 +delete -background None -layers merge $png";
+        // run the convert command for png
+        $command = CONVERT_PATH . " -compose Over $merge_layers \( -clone 0 -alpha transparent \) -swap 0 +delete -background None -layers merge $png_out";
+        write2log($log, $command);
+        `$command`;
+        
+        // run the convert command for psd - can just convert the png
+        $command = CONVERT_PATH . " $png_out $psd_out";
         write2log($log, $command);
         `$command`;
          
          // wrap it up
-         write2log($log, ">>>>>>>>>>>>>> $key PNG file saved as " . basename($png) . " <<<<<<<<<<<<<<\n" );
+         write2log($log, ">>>>>>>>>>>>>> $key PNG file saved as " . basename($png_out) . " <<<<<<<<<<<<<<" );
+         write2log($log, ">>>>>>>>>>>>>> $key PSD file saved as " . basename($psd_out) . " <<<<<<<<<<<<<<" );
     } else {
-        write2log($log, "No layers matching '$key'");
+        write2log($log, "No layers matching regex pattern for '$key' ($pattern)");
     }
 }
 
